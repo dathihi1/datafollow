@@ -1,0 +1,95 @@
+# DigitalOcean App Platform Configuration
+# This file defines the app structure for deployment on DigitalOcean App Platform
+
+name: autoscaling-analysis
+region: nyc
+
+# Domain configuration (replace with your domain)
+domains:
+  - domain: yourdomain.com
+    type: PRIMARY
+  - domain: www.yourdomain.com
+    type: ALIAS
+
+services:
+  # FastAPI Backend Service
+  - name: api
+    github:
+      repo: your-username/autoscaling-analysis
+      branch: main
+      deploy_on_push: true
+    
+    dockerfile_path: Dockerfile.api
+    
+    http_port: 8000
+    
+    instance_count: 2
+    instance_size_slug: basic-xs  # $5/month per instance
+    
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    
+    routes:
+      - path: /api
+      - path: /docs
+      - path: /openapi.json
+      - path: /health
+    
+    envs:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    
+    # Auto-scaling (optional, requires higher tier)
+    # autoscaling:
+    #   min_instance_count: 1
+    #   max_instance_count: 3
+    #   metrics:
+    #     cpu:
+    #       percent: 75
+
+  # Streamlit Dashboard Service
+  - name: dashboard
+    github:
+      repo: your-username/autoscaling-analysis
+      branch: main
+      deploy_on_push: true
+    
+    dockerfile_path: Dockerfile.dashboard
+    
+    http_port: 8501
+    
+    instance_count: 1
+    instance_size_slug: basic-xs  # $5/month per instance
+    
+    health_check:
+      http_path: /_stcore/health
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    
+    routes:
+      - path: /
+    
+    envs:
+      - key: ENVIRONMENT
+        value: production
+      - key: API_URL
+        value: ${api.PRIVATE_URL}
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+# Alerts (optional)
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED

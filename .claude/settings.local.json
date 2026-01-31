@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\DATA\" /b)",
+      "Bash(python scripts/run_pipeline.py:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(dir \"C:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\src\\\\models\" /b)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(find:*)",
+      "Read(//c/Users/Admin/OneDrive/Documents/python/datafollow/**)",
+      "Bash(sort:*)",
+      "Bash(del \"c:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\nul\")",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(curl:*)",
+      "Bash(.venvScriptspip install scikit-learn shap --quiet)",
+      "Bash(..venvScriptspip.exe install scikit-learn shap)",
+      "Bash(jupyter nbconvert:*)",
+      "Bash(if not exist \"c:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\reports\\\\figures\" mkdir \"c:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\reports\\\\figures\")",
+      "Bash(gh pr:*)"
+    ]
+  }
+}

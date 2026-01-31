@@ -1,0 +1,87 @@
+name: Deploy to DigitalOcean Droplet
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:
+
+env:
+  DROPLET_IP: ${{ secrets.DROPLET_IP }}
+  DROPLET_USER: ${{ secrets.DROPLET_USER }}
+
+jobs:
+  deploy:
+    name: Deploy to Droplet
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add droplet to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ env.DROPLET_IP }} >> ~/.ssh/known_hosts
+
+      - name: Copy files to droplet
+        run: |
+          ssh ${{ env.DROPLET_USER }}@${{ env.DROPLET_IP }} "mkdir -p /opt/autoscaling-analysis"
+          rsync -avz --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' \
+            ./ ${{ env.DROPLET_USER }}@${{ env.DROPLET_IP }}:/opt/autoscaling-analysis/
+
+      - name: Deploy application
+        run: |
+          ssh ${{ env.DROPLET_USER }}@${{ env.DROPLET_IP }} << 'EOF'
+            cd /opt/autoscaling-analysis/digitalocean
+            
+            # Pull latest images and rebuild
+            sudo docker-compose -f docker-compose.droplet.yml pull
+            sudo docker-compose -f docker-compose.droplet.yml up -d --build
+            
+            # Wait for services to be healthy
+            echo "Waiting for services to start..."
+            sleep 20
+            
+            # Check API health
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "✅ API is healthy"
+            else
+              echo "❌ API health check failed"
+              sudo docker-compose -f docker-compose.droplet.yml logs api
+              exit 1
+            fi
+            
+            # Check Dashboard health
+            if curl -sf http://localhost:8501/_stcore/health > /dev/null; then
+              echo "✅ Dashboard is healthy"
+            else
+              echo "❌ Dashboard health check failed"
+              sudo docker-compose -f docker-compose.droplet.yml logs dashboard
+              exit 1
+            fi
+            
+            echo "✅ Deployment successful!"
+          EOF
+
+      - name: Cleanup old images
+        run: |
+          ssh ${{ env.DROPLET_USER }}@${{ env.DROPLET_IP }} << 'EOF'
+            # Remove unused Docker images to save space
+            sudo docker image prune -af --filter "until=48h"
+          EOF
+
+      - name: Deployment summary
+        run: |
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Droplet IP:** ${{ env.DROPLET_IP }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Git Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Services should be accessible at your configured domain." >> $GITHUB_STEP_SUMMARY

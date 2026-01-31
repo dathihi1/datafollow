@@ -1,0 +1,167 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Data files (tracked by DVC)
+DATA/train.txt
+DATA/test.txt
+DATA/processed/*.parquet
+
+# Model files (large files - must download separately)
+# See MODELS_DOWNLOAD.md for instructions
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pth
+
+# Keep config files but ignore large models
+!models/*.json
+!models/README.md
+
+# Processed data files
+DATA/processed/*.parquet
+DATA/processed/*.csv
+
+# Notebook outputs
+notebooks/*.html
+notebooks/*.pdf
+
+# Reports with large images
+reports/figures/*.png
+reports/figures/*.jpg
+!reports/figures/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+models/*.joblib
+models/*.pt
+models/*.h5
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# DVC
+/dvc.lock
+/.dvc/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+credentials.json
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Reports (keep structure, ignore generated files)
+reports/*.pdf
+reports/demo_video.mp4

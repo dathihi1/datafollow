@@ -1,0 +1,57 @@
+name: Deploy to DigitalOcean App Platform
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to DigitalOcean
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Deploy to App Platform
+        run: |
+          # Update app.yaml with repository info
+          sed -i "s|your-username/autoscaling-analysis|${{ github.repository }}|g" digitalocean/app.yaml
+          
+          # Deploy or update app
+          if doctl apps list | grep -q "autoscaling-analysis"; then
+            APP_ID=$(doctl apps list --format ID,Spec.Name --no-header | grep "autoscaling-analysis" | awk '{print $1}')
+            echo "Updating existing app: $APP_ID"
+            doctl apps update $APP_ID --spec digitalocean/app.yaml
+          else
+            echo "Creating new app"
+            doctl apps create --spec digitalocean/app.yaml
+          fi
+
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for deployment to complete..."
+          sleep 60
+          
+          APP_ID=$(doctl apps list --format ID,Spec.Name --no-header | grep "autoscaling-analysis" | awk '{print $1}')
+          doctl apps get $APP_ID
+
+      - name: Deployment summary
+        run: |
+          APP_ID=$(doctl apps list --format ID,Spec.Name --no-header | grep "autoscaling-analysis" | awk '{print $1}')
+          APP_URL=$(doctl apps get $APP_ID --format LiveURL --no-header)
+          
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application URL:** $APP_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Git Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View app: https://cloud.digitalocean.com/apps/$APP_ID" >> $GITHUB_STEP_SUMMARY

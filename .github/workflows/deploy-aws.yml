@@ -1,0 +1,145 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: autoscaling-analysis
+  
+jobs:
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Get CloudFormation outputs
+        id: cf-outputs
+        run: |
+          API_REPO=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-production \
+            --query "Stacks[0].Outputs[?OutputKey=='APIRepositoryURI'].OutputValue" \
+            --output text)
+          
+          DASHBOARD_REPO=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-production \
+            --query "Stacks[0].Outputs[?OutputKey=='DashboardRepositoryURI'].OutputValue" \
+            --output text)
+          
+          CLUSTER_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-production \
+            --query "Stacks[0].Outputs[?OutputKey=='ECSClusterName'].OutputValue" \
+            --output text)
+          
+          echo "api-repo=$API_REPO" >> $GITHUB_OUTPUT
+          echo "dashboard-repo=$DASHBOARD_REPO" >> $GITHUB_OUTPUT
+          echo "cluster-name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+
+      - name: Build, tag, and push API image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.api -t ${{ steps.cf-outputs.outputs.api-repo }}:$IMAGE_TAG .
+          docker tag ${{ steps.cf-outputs.outputs.api-repo }}:$IMAGE_TAG ${{ steps.cf-outputs.outputs.api-repo }}:latest
+          docker push ${{ steps.cf-outputs.outputs.api-repo }}:$IMAGE_TAG
+          docker push ${{ steps.cf-outputs.outputs.api-repo }}:latest
+
+      - name: Build, tag, and push Dashboard image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.dashboard -t ${{ steps.cf-outputs.outputs.dashboard-repo }}:$IMAGE_TAG .
+          docker tag ${{ steps.cf-outputs.outputs.dashboard-repo }}:$IMAGE_TAG ${{ steps.cf-outputs.outputs.dashboard-repo }}:latest
+          docker push ${{ steps.cf-outputs.outputs.dashboard-repo }}:$IMAGE_TAG
+          docker push ${{ steps.cf-outputs.outputs.dashboard-repo }}:latest
+
+      - name: Update API task definition
+        id: api-task-def
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          sed "s/<YOUR_ACCOUNT_ID>/${AWS_ACCOUNT_ID}/g; s/<REGION>/${{ env.AWS_REGION }}/g" \
+            aws/ecs-task-definition-api.json > /tmp/ecs-task-definition-api.json
+          
+          # Update image to use specific tag
+          jq --arg IMAGE "${{ steps.cf-outputs.outputs.api-repo }}:${{ github.sha }}" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            /tmp/ecs-task-definition-api.json > /tmp/ecs-task-definition-api-final.json
+          
+          TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/ecs-task-definition-api-final.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          echo "task-def=$TASK_DEF" >> $GITHUB_OUTPUT
+
+      - name: Update Dashboard task definition
+        id: dashboard-task-def
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          sed "s/<YOUR_ACCOUNT_ID>/${AWS_ACCOUNT_ID}/g; s/<REGION>/${{ env.AWS_REGION }}/g" \
+            aws/ecs-task-definition-dashboard.json > /tmp/ecs-task-definition-dashboard.json
+          
+          # Update image to use specific tag
+          jq --arg IMAGE "${{ steps.cf-outputs.outputs.dashboard-repo }}:${{ github.sha }}" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            /tmp/ecs-task-definition-dashboard.json > /tmp/ecs-task-definition-dashboard-final.json
+          
+          TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/ecs-task-definition-dashboard-final.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          echo "task-def=$TASK_DEF" >> $GITHUB_OUTPUT
+
+      - name: Deploy API to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.api-task-def.outputs.task-def }}
+          service: ${{ env.PROJECT_NAME }}-api-service
+          cluster: ${{ steps.cf-outputs.outputs.cluster-name }}
+          wait-for-service-stability: true
+
+      - name: Deploy Dashboard to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.dashboard-task-def.outputs.task-def }}
+          service: ${{ env.PROJECT_NAME }}-dashboard-service
+          cluster: ${{ steps.cf-outputs.outputs.cluster-name }}
+          wait-for-service-stability: true
+
+      - name: Deployment summary
+        run: |
+          ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-production \
+            --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDNS'].OutputValue" \
+            --output text)
+          
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application URLs:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Dashboard: http://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+          echo "- API Docs: http://$ALB_DNS/docs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Git Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
