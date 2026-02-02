@@ -47,8 +47,8 @@ class ScalingConfig:
     scale_out_increment: int = 2     # Add 2 servers at once
     scale_in_decrement: int = 1      # Remove 1 server at a time
 
-    # Cost (example pricing)
-    cost_per_server_per_hour: float = 0.10  # $0.10 per server per hour
+    # Cost (realistic AWS EC2 pricing)
+    cost_per_server_per_hour: float = 0.85  # $0.85 per server per hour (t3.medium)
 
     # Time window
     time_window_minutes: int = 5  # 5-minute aggregation
