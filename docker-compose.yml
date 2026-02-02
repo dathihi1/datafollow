@@ -19,6 +19,7 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    stop_grace_period: 5s
     networks:
       - autoscaling-network
 
@@ -43,6 +44,7 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    stop_grace_period: 5s
     networks:
       - autoscaling-network
 

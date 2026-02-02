@@ -9,6 +9,7 @@ services:
     image: nginx:alpine
     container_name: nginx
     restart: unless-stopped
+    stop_grace_period: 5s
     ports:
       - "80:80"
       - "443:443"
@@ -27,6 +28,7 @@ services:
   certbot:
     image: certbot/certbot
     container_name: certbot
+    stop_grace_period: 3s
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
@@ -41,6 +43,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: autoscaling-api
     restart: unless-stopped
+    stop_grace_period: 5s
     expose:
       - "8000"
     environment:
@@ -65,6 +68,7 @@ services:
       dockerfile: Dockerfile.dashboard
     container_name: autoscaling-dashboard
     restart: unless-stopped
+    stop_grace_period: 5s
     expose:
       - "8501"
     environment:

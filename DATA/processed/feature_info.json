@@ -90,7 +90,14 @@
     "request_count_pct_of_max",
     "request_count_velocity",
     "request_count_acceleration",
-    "request_count_momentum"
+    "request_count_momentum",
+    "event_type",
+    "is_special_event",
+    "event_impact",
+    "event_name",
+    "is_anomaly_ml",
+    "anomaly_score_ml",
+    "anomaly_agreement"
   ],
   "numeric_features": [
     "request_count",
@@ -180,11 +187,18 @@
     "request_count_pct_of_max",
     "request_count_velocity",
     "request_count_acceleration",
-    "request_count_momentum"
+    "request_count_momentum",
+    "event_type",
+    "is_special_event",
+    "is_anomaly_ml",
+    "anomaly_score_ml",
+    "anomaly_agreement"
   ],
   "categorical_features": [
     "time_of_day",
-    "part_of_day"
+    "part_of_day",
+    "event_impact",
+    "event_name"
   ],
   "target": "request_count",
   "timestamp_col": "timestamp",
@@ -299,40 +313,39 @@
     "bytes_total_lag_3",
     "bytes_total_lag_6",
     "request_count_rolling_std_60",
+    "anomaly_score_ml",
     "request_count_diff_60",
     "bytes_total_lag_12",
-    "request_count_ewm_std_5",
     "request_count_pct_change_60",
+    "request_count_ewm_std_5",
     "request_count_cv",
     "day_of_year",
     "request_count_diff_288",
     "bytes_max",
     "request_count_pct_change_12",
-    "request_count_pct_change_6",
     "request_count_pct_change_3",
+    "request_count_pct_change_6",
     "request_count_pct_change_288",
-    "request_count_rolling_std_3",
     "request_count_pct_change_1",
+    "request_count_rolling_std_3",
     "request_count_diff_12",
     "request_count_diff_3",
     "request_count_momentum",
     "request_count_diff_6",
-    "request_count_velocity",
+    "request_count_diff_1",
     "bytes_avg",
     "request_count_trend",
+    "request_count_lag_288",
+    "hour",
     "spike_score",
     "day",
-    "request_count_lag_288",
-    "request_count_acceleration",
-    "hour",
-    "dom_sin"
+    "request_count_acceleration"
   ],
   "selected_by_category": {
     "time": [
       "day_of_year",
-      "day",
       "hour",
-      "dom_sin"
+      "day"
     ],
     "lag": [
       "request_count_lag_3",
@@ -345,13 +358,14 @@
       "request_count_pct_change_60",
       "request_count_diff_288",
       "request_count_pct_change_12",
-      "request_count_pct_change_6",
       "request_count_pct_change_3",
+      "request_count_pct_change_6",
       "request_count_pct_change_288",
       "request_count_pct_change_1",
       "request_count_diff_12",
       "request_count_diff_3",
       "request_count_diff_6",
+      "request_count_diff_1",
       "request_count_lag_288"
     ],
     "rolling": [
@@ -364,7 +378,6 @@
     "advanced": [
       "request_count_cv",
       "request_count_momentum",
-      "request_count_velocity",
       "request_count_trend",
       "spike_score"
     ],
@@ -378,6 +391,7 @@
     ],
     "other": [
       "request_count_pct_of_max",
+      "anomaly_score_ml",
       "request_count_acceleration"
     ]
   },

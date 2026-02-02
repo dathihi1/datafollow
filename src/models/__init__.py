@@ -1,7 +1,12 @@
 """Machine learning models for traffic prediction."""
 
 from src.models.sarima import SARIMAModel, SARIMAConfig
-from src.models.lgbm_model import LGBMModel, LGBMConfig
+from src.models.lgbm_model import (
+    LGBMModel,
+    LGBMConfig,
+    get_gpu_config,
+    migrate_xgboost_to_lightgbm,
+)
 from src.models.xgboost_model import XGBoostModel
 
 # Prophet is optional (requires pip install prophet)
@@ -22,4 +27,7 @@ __all__ = [
     "LGBMConfig",
     "XGBoostModel",
     "PROPHET_AVAILABLE",
+    # Migration helpers
+    "get_gpu_config",
+    "migrate_xgboost_to_lightgbm",
 ]

@@ -82,8 +82,12 @@
   "request_count_bb_upper",
   "request_count_bb_lower",
   "request_count_bb_width",
-  "request_count_pct_of_max",
   "request_count_velocity",
   "request_count_acceleration",
-  "request_count_momentum"
+  "request_count_momentum",
+  "event_type",
+  "is_special_event",
+  "is_anomaly_ml",
+  "anomaly_score_ml",
+  "anomaly_agreement"
 ]

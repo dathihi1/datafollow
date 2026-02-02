@@ -1,8 +1,16 @@
-"""Streamlit dashboard for NASA traffic autoscaling analysis."""
+"""Streamlit dashboard for NASA traffic autoscaling analysis.
+
+Optimized version with:
+- LTTB downsampling for large datasets (preserves visual patterns)
+- Disk caching for data loading and simulations
+- Database persistence for simulation history
+- Interactive visualizations with export
+"""
 
 import logging
 import sys
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -29,8 +37,10 @@ NOISE_STD = 10
 SPIKE_COUNT = 10
 SPIKE_MIN = 50
 SPIKE_MAX = 150
-MAX_CSV_SIZE_MB = 50
-MAX_CSV_ROWS = 1_000_000
+MAX_CSV_SIZE_MB = 500
+MAX_CSV_ROWS = 10_000_000
+VIZ_MAX_POINTS = 10000  # Maximum points for visualization
+UPLOADS_DIR = Path(__file__).parent.parent / "DATA" / "uploads"
 
 # Page configuration
 st.set_page_config(
@@ -38,6 +48,134 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Initialize session state
+if 'loaded_data' not in st.session_state:
+    st.session_state.loaded_data = None
+if 'loaded_data_original' not in st.session_state:
+    st.session_state.loaded_data_original = None  # Full original data
+if 'data_source_type' not in st.session_state:
+    st.session_state.data_source_type = None
+if 'uploaded_file_id' not in st.session_state:
+    st.session_state.uploaded_file_id = None
+if 'uploaded_file_path' not in st.session_state:
+    st.session_state.uploaded_file_path = None
+if 'simulation_cache' not in st.session_state:
+    st.session_state.simulation_cache = {}
+
+# Create uploads directory if it doesn't exist
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_uploaded_file(uploaded_file, file_type: str) -> Path | None:
+    """Save uploaded file to uploads directory."""
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{uploaded_file.name}"
+        filepath = UPLOADS_DIR / filename
+        
+        uploaded_file.seek(0)
+        with open(filepath, 'wb') as f:
+            f.write(uploaded_file.read())
+        
+        uploaded_file.seek(0)  # Reset for further processing
+        return filepath
+    except Exception as e:
+        st.warning(f"Could not save file: {e}")
+        return None
+
+
+def lttb_downsample(data: np.ndarray, target_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Downsample using Largest-Triangle-Three-Buckets algorithm.
+
+    LTTB preserves visual characteristics better than averaging by
+    selecting points that maximize the triangle area with neighbors.
+    This keeps peaks and valleys visible in the downsampled data.
+
+    Args:
+        data: 1D array of values
+        target_points: Target number of points
+
+    Returns:
+        Tuple of (indices, downsampled values)
+    """
+    n = len(data)
+    if n <= target_points:
+        return np.arange(n), data.copy()
+
+    # Always keep first and last points
+    indices = [0]
+    sampled = [data[0]]
+
+    bucket_size = (n - 2) / (target_points - 2)
+    a = 0  # Previous selected point index
+
+    for i in range(target_points - 2):
+        # Calculate bucket range
+        bucket_start = int((i + 1) * bucket_size) + 1
+        bucket_end = int((i + 2) * bucket_size) + 1
+        bucket_end = min(bucket_end, n - 1)
+
+        # Calculate average of next bucket
+        next_bucket_start = int((i + 2) * bucket_size) + 1
+        next_bucket_end = int((i + 3) * bucket_size) + 1
+        next_bucket_end = min(next_bucket_end, n)
+
+        if next_bucket_start < next_bucket_end:
+            avg_next = np.mean(data[next_bucket_start:next_bucket_end])
+        else:
+            avg_next = data[-1]
+
+        # Find point with largest triangle area
+        max_area = -1
+        max_idx = bucket_start
+
+        for j in range(bucket_start, bucket_end):
+            # Simplified triangle area calculation
+            area = abs(
+                (j - a) * (avg_next - data[a]) -
+                (bucket_end - a) * (data[j] - data[a])
+            )
+            if area > max_area:
+                max_area = area
+                max_idx = j
+
+        indices.append(max_idx)
+        sampled.append(data[max_idx])
+        a = max_idx
+
+    indices.append(n - 1)
+    sampled.append(data[-1])
+
+    return np.array(indices), np.array(sampled)
+
+
+def downsample_data(loads: np.ndarray, max_points: int = 10000) -> np.ndarray:
+    """Downsample data using LTTB algorithm for better visual fidelity."""
+    if len(loads) <= max_points:
+        return loads
+    _, downsampled = lttb_downsample(loads, max_points)
+    return downsampled
+
+
+def downsample_multiple(*arrays: np.ndarray, max_points: int = 10000) -> list[np.ndarray]:
+    """Downsample multiple arrays consistently using LTTB on first array.
+
+    All arrays are downsampled using the same indices from LTTB on the first array,
+    ensuring time-aligned visualization.
+    """
+    if len(arrays) == 0:
+        return []
+
+    n = len(arrays[0])
+    if n <= max_points:
+        return list(arrays)
+
+    # Use LTTB on first array to get indices
+    indices, _ = lttb_downsample(arrays[0], max_points)
+
+    # Apply same indices to all arrays
+    return [arr[indices] for arr in arrays]
 
 
 def get_config(preset: str) -> ScalingConfig:
@@ -181,7 +319,7 @@ def _render_traffic_tab(
     servers: list,
     config: ScalingConfig,
 ) -> None:
-    """Render traffic analysis tab."""
+    """Render traffic analysis tab with enhanced interactivity."""
     st.header("Traffic Analysis")
 
     fig_traffic = go.Figure()
@@ -190,6 +328,7 @@ def _render_traffic_tab(
         mode='lines',
         name='Request Load',
         line=dict(color='#1f77b4', width=1),
+        hovertemplate="Period: %{x}<br>Load: %{y:.0f} requests<extra></extra>",
     ))
 
     capacity = np.array(servers) * config.requests_per_server
@@ -198,16 +337,37 @@ def _render_traffic_tab(
         mode='lines',
         name='Capacity',
         line=dict(color='#2ca02c', width=2, dash='dash'),
+        hovertemplate="Period: %{x}<br>Capacity: %{y:.0f} requests<extra></extra>",
     ))
 
     fig_traffic.update_layout(
         title="Traffic Load vs Capacity",
-        xaxis_title="Time Period (5-min intervals)",
+        xaxis=dict(
+            title="Time Period (5-min intervals)",
+            rangeslider=dict(visible=True, thickness=0.05),
+        ),
         yaxis_title="Requests",
-        height=400,
+        height=500,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        hovermode="x unified",
     )
     st.plotly_chart(fig_traffic, use_container_width=True)
+
+    # Export button
+    col1, col2, col3 = st.columns([1, 1, 4])
+    with col1:
+        traffic_df = pd.DataFrame({
+            "period": range(len(loads)),
+            "load": loads,
+            "capacity": capacity,
+        })
+        st.download_button(
+            "Download Data (CSV)",
+            traffic_df.to_csv(index=False),
+            f"traffic_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            "text/csv",
+            key="export_traffic_csv",
+        )
 
     col1, col2 = st.columns(2)
 
@@ -429,29 +589,149 @@ def _render_cumulative_cost(
     st.plotly_chart(fig_cumcost, use_container_width=True)
 
 
-def _load_csv_data(uploaded_file) -> np.ndarray | None:
-    """Load and validate CSV data from upload."""
-    if uploaded_file.size > MAX_CSV_SIZE_MB * 1024 * 1024:
-        st.error(f"File too large. Maximum size is {MAX_CSV_SIZE_MB}MB.")
-        return None
+def _load_txt_data(uploaded_file) -> np.ndarray | None:
+    """Load and validate TXT data from upload."""
+    # Check file size
+    try:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        if file_size_mb > MAX_CSV_SIZE_MB:
+            st.error(f"File too large ({file_size_mb:.1f}MB). Maximum size is {MAX_CSV_SIZE_MB}MB.")
+            return None
+        
+        if file_size_mb > 50:
+            st.info(f"Loading large file ({file_size_mb:.1f}MB)... This may take a moment.")
+    except AttributeError:
+        pass
 
     try:
-        df = pd.read_csv(uploaded_file)
+        uploaded_file.seek(0)
+        content = uploaded_file.read().decode('utf-8')
+        
+        # Try different parsing strategies
+        loads = []
+        
+        # Strategy 1: One number per line
+        lines = content.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):  # Skip empty lines and comments
+                continue
+            try:
+                # Try to parse as single number
+                loads.append(float(line))
+            except ValueError:
+                # Strategy 2: Space/tab/comma separated values in line
+                parts = line.replace(',', ' ').replace('\t', ' ').split()
+                for part in parts:
+                    try:
+                        loads.append(float(part))
+                    except ValueError:
+                        continue
+        
+        if not loads:
+            st.error("Could not parse any numeric values from TXT file.")
+            return None
+        
+        loads = np.array(loads)
+        
+        if len(loads) > MAX_CSV_ROWS:
+            st.error(f"TXT has too many values ({len(loads):,}). Maximum is {MAX_CSV_ROWS:,}.")
+            return None
+        
+        # Validate data
+        if np.any(np.isnan(loads)):
+            st.warning("TXT contains NaN values. They will be replaced with 0.")
+            loads = np.nan_to_num(loads, nan=0.0)
+        
+        if np.any(loads < 0):
+            st.warning("TXT contains negative values. They will be set to 0.")
+            loads = np.maximum(loads, 0)
+        
+        st.success(f"Successfully loaded {len(loads):,} data points from TXT.")
+        return loads
+        
+    except UnicodeDecodeError:
+        st.error("Could not decode TXT file. Please ensure it's a text file with UTF-8 encoding.")
+        return None
     except Exception as e:
-        st.error(f"Error reading CSV: {e}")
+        st.error(f"Error reading TXT: {type(e).__name__}: {e}")
+        return None
+
+
+def _load_csv_data(uploaded_file) -> np.ndarray | None:
+    """Load and validate CSV data from upload."""
+    # Check file size
+    try:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        if file_size_mb > MAX_CSV_SIZE_MB:
+            st.error(f"File too large ({file_size_mb:.1f}MB). Maximum size is {MAX_CSV_SIZE_MB}MB.")
+            return None
+        
+        if file_size_mb > 50:
+            st.info(f"Loading large file ({file_size_mb:.1f}MB)... This may take a moment.")
+    except AttributeError:
+        # Some file objects may not have size attribute
+        pass
+
+    try:
+        # For large files, use chunking to avoid memory issues
+        uploaded_file.seek(0)  # Reset file pointer
+        
+        # Try to read file in chunks for large files
+        if hasattr(uploaded_file, 'size') and uploaded_file.size > 50 * 1024 * 1024:
+            chunks = []
+            chunk_size = 100000  # Read 100k rows at a time
+            
+            with st.spinner("Reading large CSV file in chunks..."):
+                for chunk in pd.read_csv(uploaded_file, chunksize=chunk_size):
+                    chunks.append(chunk)
+                    if sum(len(c) for c in chunks) > MAX_CSV_ROWS:
+                        st.error(f"CSV has too many rows. Maximum is {MAX_CSV_ROWS:,}.")
+                        return None
+            
+            df = pd.concat(chunks, ignore_index=True)
+        else:
+            df = pd.read_csv(uploaded_file)
+            
+    except pd.errors.EmptyDataError:
+        st.error("CSV file is empty.")
+        return None
+    except pd.errors.ParserError as e:
+        st.error(f"Error parsing CSV: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error reading CSV: {type(e).__name__}: {e}")
         return None
 
     if len(df) > MAX_CSV_ROWS:
         st.error(f"CSV has too many rows ({len(df):,}). Maximum is {MAX_CSV_ROWS:,}.")
         return None
+    
+    if len(df) == 0:
+        st.error("CSV file contains no data rows.")
+        return None
 
+    # Check for required columns
     if "load" in df.columns:
-        return df["load"].values
-    if "request_count" in df.columns:
-        return df["request_count"].values
-
-    st.error("CSV must contain 'load' or 'request_count' column")
-    return None
+        loads = df["load"].values
+    elif "request_count" in df.columns:
+        loads = df["request_count"].values
+    else:
+        available_cols = ", ".join(df.columns.tolist())
+        st.error(f"CSV must contain 'load' or 'request_count' column. Available columns: {available_cols}")
+        return None
+    
+    # Validate data
+    if np.any(np.isnan(loads)):
+        st.warning("CSV contains NaN values. They will be replaced with 0.")
+        loads = np.nan_to_num(loads, nan=0.0)
+    
+    if np.any(loads < 0):
+        st.warning("CSV contains negative values. They will be set to 0.")
+        loads = np.maximum(loads, 0)
+    
+    st.success(f"Successfully loaded {len(loads):,} data points from CSV.")
+    return loads
 
 
 def main():
@@ -464,7 +744,7 @@ def main():
 
     data_source = st.sidebar.radio(
         "Data Source",
-        ["Sample Data", "Upload CSV", "Manual Input"],
+        ["Sample Data", "Upload CSV", "Upload TXT", "Manual Input"],
     )
     config_preset = st.sidebar.selectbox(
         "Scaling Configuration",
@@ -499,19 +779,96 @@ def main():
             scale_in_decrement=config.scale_in_decrement,
             cost_per_server_per_hour=config.cost_per_server_per_hour,
         )
+    
+    # Visualization settings
+    with st.sidebar.expander("⚙️ Visualization Settings"):
+        enable_downsample = st.checkbox(
+            "Auto-downsample for visualization",
+            value=True,
+            help=f"Downsample to {VIZ_MAX_POINTS:,} points for faster charts. Simulation still uses full data."
+        )
+        if st.session_state.uploaded_file_path:
+            st.info(f"💾 Saved: {st.session_state.uploaded_file_path.name}")
+            if st.button("Clear saved file"):
+                st.session_state.uploaded_file_path = None
+                st.rerun()
 
-    # Load data
+    # Load data with caching
     loads = None
+    data_changed = False
 
     if data_source == "Sample Data":
         n_periods = st.sidebar.slider("Number of Periods (5-min intervals)", 48, 576, DAILY_PERIODS_5MIN)
         seed = st.sidebar.number_input("Random Seed", 0, 1000, 42)
-        loads = generate_sample_load(n_periods, seed)
+        
+        data_key = f"sample_{n_periods}_{seed}"
+        if st.session_state.data_source_type != data_key:
+            loads = generate_sample_load(n_periods, seed)
+            st.session_state.loaded_data = loads
+            st.session_state.data_source_type = data_key
+            data_changed = True
+        else:
+            loads = st.session_state.loaded_data
 
     elif data_source == "Upload CSV":
-        uploaded_file = st.sidebar.file_uploader("Upload CSV with 'load' column", type="csv")
+        st.sidebar.info(f"Maximum file size: {MAX_CSV_SIZE_MB}MB")
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload CSV with 'load' or 'request_count' column",
+            type="csv",
+            help="CSV file should contain a column named 'load' or 'request_count' with numeric values",
+            key="csv_uploader"
+        )
         if uploaded_file is not None:
-            loads = _load_csv_data(uploaded_file)
+            if hasattr(uploaded_file, 'size'):
+                st.sidebar.text(f"File size: {uploaded_file.size / (1024 * 1024):.2f}MB")
+            
+            file_id = f"csv_{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.uploaded_file_id != file_id:
+                # Save uploaded file
+                saved_path = save_uploaded_file(uploaded_file, "csv")
+                if saved_path:
+                    st.session_state.uploaded_file_path = saved_path
+                    st.sidebar.success(f"✔ Saved to: DATA/uploads/")
+                
+                loads = _load_csv_data(uploaded_file)
+                if loads is not None:
+                    st.session_state.loaded_data_original = loads  # Store full data
+                    st.session_state.loaded_data = loads
+                    st.session_state.data_source_type = "csv"
+                    st.session_state.uploaded_file_id = file_id
+                    data_changed = True
+            else:
+                loads = st.session_state.loaded_data
+
+    elif data_source == "Upload TXT":
+        st.sidebar.info(f"Maximum file size: {MAX_CSV_SIZE_MB}MB")
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload TXT file with numeric values",
+            type="txt",
+            help="TXT file with one number per line, or space/comma-separated values. Lines starting with # are ignored.",
+            key="txt_uploader"
+        )
+        if uploaded_file is not None:
+            if hasattr(uploaded_file, 'size'):
+                st.sidebar.text(f"File size: {uploaded_file.size / (1024 * 1024):.2f}MB")
+            
+            file_id = f"txt_{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.uploaded_file_id != file_id:
+                # Save uploaded file
+                saved_path = save_uploaded_file(uploaded_file, "txt")
+                if saved_path:
+                    st.session_state.uploaded_file_path = saved_path
+                    st.sidebar.success(f"✔ Saved to: DATA/uploads/")
+                
+                loads = _load_txt_data(uploaded_file)
+                if loads is not None:
+                    st.session_state.loaded_data_original = loads  # Store full data
+                    st.session_state.loaded_data = loads
+                    st.session_state.data_source_type = "txt"
+                    st.session_state.uploaded_file_id = file_id
+                    data_changed = True
+            else:
+                loads = st.session_state.loaded_data
 
     elif data_source == "Manual Input":
         load_text = st.sidebar.text_area(
@@ -519,7 +876,14 @@ def main():
             "100, 120, 150, 180, 200, 180, 150, 120, 100, 80",
         )
         try:
-            loads = np.array([float(x.strip()) for x in load_text.split(",")])
+            data_key = f"manual_{hash(load_text)}"
+            if st.session_state.data_source_type != data_key:
+                loads = np.array([float(x.strip()) for x in load_text.split(",")])
+                st.session_state.loaded_data = loads
+                st.session_state.data_source_type = data_key
+                data_changed = True
+            else:
+                loads = st.session_state.loaded_data
         except ValueError:
             st.error("Invalid input format. Please enter comma-separated numbers.")
 
@@ -527,29 +891,202 @@ def main():
         st.warning("Please provide load data to analyze.")
         return
 
-    # Run simulation
-    result = run_simulation(loads, config, policy_type)
-    if result is None:
-        return
-
+    # Display data info
+    data_info_col1, data_info_col2, data_info_col3 = st.columns(3)
+    with data_info_col1:
+        st.metric("📊 Data Points", f"{len(loads):,}")
+    with data_info_col2:
+        if st.session_state.loaded_data_original is not None:
+            st.metric("💾 Original Data", f"{len(st.session_state.loaded_data_original):,}")
+        else:
+            st.metric("💾 Original Data", f"{len(loads):,}")
+    with data_info_col3:
+        st.metric("⏱️ Time Range", f"{len(loads) * 5} min" if len(loads) < 1000 else f"{len(loads) * 5 / 60:.1f} hrs")
+    
+    # Create cache key for simulation (using full data)
+    config_key = f"{config.min_servers}_{config.max_servers}_{config.requests_per_server}_{config.scale_out_threshold}_{config.scale_in_threshold}"
+    cache_key = f"{st.session_state.data_source_type}_{config_key}_{policy_type}"
+    
+    # IMPORTANT: Run simulation on FULL data (loads contains all data)
+    if cache_key not in st.session_state.simulation_cache or data_changed:
+        with st.spinner(f"Running simulation on {len(loads):,} data points..."):
+            result = run_simulation(loads, config, policy_type)
+            if result is None:
+                return
+            st.session_state.simulation_cache[cache_key] = result
+        st.success(f"✅ Simulation completed on full dataset ({len(loads):,} points)")
+    else:
+        result = st.session_state.simulation_cache[cache_key]
+        st.info(f"♻️ Using cached simulation results ({len(loads):,} points)")
+    
     metrics, servers, utilizations, costs = result
+    
+    # Prepare visualization data (downsample if needed and enabled)
+    loads_viz = loads
+    servers_viz = servers
+    utilizations_viz = utilizations
+    costs_viz = costs
+    
+    if enable_downsample and len(loads) > VIZ_MAX_POINTS:
+        st.info(f"📈 Downsampling visualization from {len(loads):,} to {VIZ_MAX_POINTS:,} points for performance. Simulation used full data.")
+        loads_viz = downsample_data(loads, VIZ_MAX_POINTS)
+        servers_viz = downsample_data(np.array(servers), VIZ_MAX_POINTS).tolist()
+        utilizations_viz = downsample_data(np.array(utilizations), VIZ_MAX_POINTS).tolist()
+        costs_viz = downsample_data(np.array(costs), VIZ_MAX_POINTS).tolist()
 
-    # Render tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Overview", "Traffic Analysis", "Scaling Behavior", "Cost Analysis",
+    # Save to history option in sidebar
+    with st.sidebar.expander("Save to History"):
+        try:
+            from app.db.service import SimulationService
+            sim_service = SimulationService()
+
+            save_name = st.text_input("Result Name", key="save_name")
+            save_desc = st.text_area("Description", key="save_desc", height=68)
+
+            if st.button("Save Result", key="save_result"):
+                data_source_type = st.session_state.data_source_type or "unknown"
+                if data_source_type.startswith("sample_"):
+                    data_source_type = "sample"
+                elif data_source_type.startswith("manual_"):
+                    data_source_type = "manual"
+
+                result_id = sim_service.save_result(
+                    metrics=metrics,
+                    servers=servers,
+                    utilizations=utilizations,
+                    costs=costs,
+                    data_source_type=data_source_type,
+                    data_points_count=len(loads),
+                    config_preset=config_preset,
+                    policy_type=policy_type,
+                    config_dict=config.to_dict(),
+                    name=save_name or None,
+                    description=save_desc or None,
+                    loads=loads,
+                )
+                st.success(f"Saved! ID: {result_id}")
+        except ImportError:
+            st.info("Install SQLAlchemy: `pip install sqlalchemy`")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    # Cache management
+    with st.sidebar.expander("Cache Management"):
+        try:
+            from app.cache import clear_cache, get_cache_stats
+            stats = get_cache_stats()
+            st.write(f"Cached items: {stats['count']}")
+            st.write(f"Cache size: {stats['total_size_mb']:.2f} MB")
+            if st.button("Clear Cache"):
+                count = clear_cache()
+                st.session_state.simulation_cache = {}
+                st.success(f"Cleared {count} disk cache items")
+        except ImportError:
+            if st.button("Clear Session Cache"):
+                st.session_state.simulation_cache = {}
+                st.success("Session cache cleared")
+
+    # Render tabs (using visualization data)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Overview", "Traffic Analysis", "Scaling Behavior", "Cost Analysis", "History",
     ])
 
     with tab1:
         _render_overview_tab(metrics, config_preset, policy_type, config)
 
     with tab2:
-        _render_traffic_tab(loads, servers, config)
+        _render_traffic_tab(loads_viz, servers_viz, config)
 
     with tab3:
-        _render_scaling_tab(loads, servers, utilizations, metrics, config)
+        _render_scaling_tab(loads_viz, servers_viz, utilizations_viz, metrics, config)
 
     with tab4:
-        _render_cost_tab(loads, metrics, costs, config)
+        _render_cost_tab(loads_viz, metrics, costs_viz, config)
+
+    with tab5:
+        _render_history_tab()
+
+
+def _render_history_tab() -> None:
+    """Render simulation history tab with database integration."""
+    st.header("Simulation History")
+
+    try:
+        from app.db.service import SimulationService
+        sim_service = SimulationService()
+    except ImportError:
+        st.error("Database not available. Install SQLAlchemy: `pip install sqlalchemy`")
+        return
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        return
+
+    # Statistics
+    try:
+        stats = sim_service.get_statistics()
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Saved", stats.get("total_results", 0))
+        with col2:
+            avg_cost = stats.get("avg_cost")
+            st.metric("Avg Cost", f"${avg_cost:.2f}" if avg_cost else "N/A")
+        with col3:
+            avg_sla = stats.get("avg_sla_violation_rate")
+            st.metric("Avg SLA Rate", f"{avg_sla:.1%}" if avg_sla else "N/A")
+        with col4:
+            if st.button("Refresh", key="refresh_history"):
+                st.rerun()
+
+        st.markdown("---")
+
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            filter_preset = st.selectbox(
+                "Filter by Preset",
+                ["All", "balanced", "conservative", "aggressive"],
+                key="filter_preset",
+            )
+        with col2:
+            filter_policy = st.selectbox(
+                "Filter by Policy",
+                ["All", "balanced", "reactive", "predictive"],
+                key="filter_policy",
+            )
+        with col3:
+            search = st.text_input("Search", key="search_history")
+
+        # List results
+        results = sim_service.list_results(
+            limit=20,
+            config_preset=filter_preset if filter_preset != "All" else None,
+            policy_type=filter_policy if filter_policy != "All" else None,
+            search=search if search else None,
+        )
+
+        if results:
+            for res in results:
+                with st.expander(f"{res['name']} - ${res['total_cost']:.2f}", expanded=False):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.write(f"**Created:** {res['created_at'][:16] if res['created_at'] else 'N/A'}")
+                        st.write(f"**Preset:** {res['config_preset']}")
+                        st.write(f"**Policy:** {res['policy_type']}")
+                    with col2:
+                        st.write(f"**Data Points:** {res['data_points_count']:,}")
+                        st.write(f"**Avg Servers:** {res['avg_servers']:.1f}")
+                        st.write(f"**SLA Violations:** {res['sla_violations']}")
+                    with col3:
+                        if st.button("Delete", key=f"del_{res['id']}"):
+                            sim_service.delete_result(res['id'])
+                            st.success("Deleted!")
+                            st.rerun()
+        else:
+            st.info("No saved simulations yet. Run a simulation and save it from the sidebar.")
+
+    except Exception as e:
+        st.error(f"Error loading history: {e}")
 
 
 if __name__ == "__main__":

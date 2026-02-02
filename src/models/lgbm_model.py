@@ -1,8 +1,26 @@
-"""LightGBM model wrapper for time series forecasting."""
+"""LightGBM model wrapper for time series forecasting.
+
+Optimized for large datasets (4M+ records) with focus on training speed
+and memory efficiency while maintaining accuracy.
+
+XGBoost to LightGBM parameter mapping reference:
+    XGBoost              -> LightGBM
+    n_estimators         -> n_estimators (same)
+    max_depth            -> max_depth (same, but use -1 for no limit)
+    learning_rate        -> learning_rate (same)
+    subsample            -> subsample / bagging_fraction
+    colsample_bytree     -> colsample_bytree / feature_fraction
+    min_child_weight     -> min_child_samples (concept differs)
+    gamma                -> min_split_gain
+    reg_alpha            -> reg_alpha (L1)
+    reg_lambda           -> reg_lambda (L2)
+    tree_method='hist'   -> (default in LightGBM)
+    n_jobs               -> n_jobs
+"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 import numpy as np
 import pandas as pd
@@ -53,13 +71,127 @@ class LGBMConfig:
     subsample_freq: int = 0
     colsample_bytree: float = 1.0
 
+    # Large dataset optimizations
+    max_bin: int = 255
+    min_data_in_bin: int = 3
+
     # Other
     random_state: int = 42
     n_jobs: int = -1
     verbose: int = -1
+    device: str = "cpu"
 
     # Early stopping
     early_stopping_rounds: int = 50
+
+    @classmethod
+    def from_xgboost_params(cls, xgb_params: Dict[str, Any]) -> "LGBMConfig":
+        """Create LGBMConfig from XGBoost parameters.
+
+        Automatically maps XGBoost hyperparameters to LightGBM equivalents.
+
+        Args:
+            xgb_params: Dictionary of XGBoost parameters
+
+        Returns:
+            LGBMConfig with mapped parameters
+        """
+        lgb_params = {}
+
+        # Direct mappings (same name)
+        direct_map = ['learning_rate', 'reg_alpha', 'reg_lambda',
+                      'random_state', 'n_jobs']
+        for param in direct_map:
+            if param in xgb_params:
+                lgb_params[param] = xgb_params[param]
+
+        # n_estimators mapping
+        if 'n_estimators' in xgb_params:
+            lgb_params['n_estimators'] = xgb_params['n_estimators']
+
+        # max_depth mapping (XGBoost default 6, LightGBM uses -1 for unlimited)
+        if 'max_depth' in xgb_params:
+            lgb_params['max_depth'] = xgb_params['max_depth']
+
+        # subsample -> subsample (same name in sklearn API)
+        if 'subsample' in xgb_params:
+            lgb_params['subsample'] = xgb_params['subsample']
+            lgb_params['subsample_freq'] = 1
+
+        # colsample_bytree -> colsample_bytree (same name in sklearn API)
+        if 'colsample_bytree' in xgb_params:
+            lgb_params['colsample_bytree'] = xgb_params['colsample_bytree']
+
+        # gamma -> min_split_gain
+        if 'gamma' in xgb_params:
+            lgb_params['min_split_gain'] = xgb_params['gamma']
+
+        # min_child_weight -> min_child_samples (approximate conversion)
+        if 'min_child_weight' in xgb_params:
+            lgb_params['min_child_samples'] = int(xgb_params['min_child_weight'] * 15)
+
+        # Set num_leaves based on max_depth (LightGBM best practice)
+        if 'max_depth' in lgb_params:
+            lgb_params['num_leaves'] = min(2 ** lgb_params['max_depth'] - 1, 127)
+
+        return cls(**lgb_params)
+
+    @classmethod
+    def for_large_dataset(cls, n_records: int) -> "LGBMConfig":
+        """Get optimized config for large datasets.
+
+        Args:
+            n_records: Number of records in dataset
+
+        Returns:
+            LGBMConfig optimized for the dataset size
+        """
+        if n_records < 100_000:
+            return cls(
+                num_leaves=31,
+                min_child_samples=20,
+                max_bin=255,
+            )
+        elif n_records < 1_000_000:
+            return cls(
+                num_leaves=63,
+                min_child_samples=50,
+                max_bin=255,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=1.0,
+            )
+        elif n_records < 10_000_000:
+            # 4M records falls here - optimized for speed and memory
+            return cls(
+                num_leaves=127,
+                min_child_samples=100,
+                max_bin=511,  # More bins for better accuracy
+                min_data_in_bin=5,
+                subsample=0.7,
+                subsample_freq=1,
+                colsample_bytree=0.7,
+                reg_alpha=0.2,
+                reg_lambda=2.0,
+                learning_rate=0.05,
+                n_estimators=500,
+            )
+        else:
+            # 10M+ records
+            return cls(
+                num_leaves=255,
+                min_child_samples=200,
+                max_bin=1023,
+                min_data_in_bin=10,
+                subsample=0.6,
+                subsample_freq=1,
+                colsample_bytree=0.6,
+                reg_alpha=0.5,
+                reg_lambda=5.0,
+                learning_rate=0.03,
+                n_estimators=1000,
+            )
 
     def to_dict(self) -> dict:
         """Convert to dictionary for LightGBM."""
@@ -78,9 +210,12 @@ class LGBMConfig:
             "subsample": self.subsample,
             "subsample_freq": self.subsample_freq,
             "colsample_bytree": self.colsample_bytree,
+            "max_bin": self.max_bin,
+            "min_data_in_bin": self.min_data_in_bin,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
             "verbose": self.verbose,
+            "device": self.device,
         }
 
 
@@ -458,3 +593,139 @@ class LGBMModel:
         instance.feature_names = model_data["feature_names"]
         instance.best_iteration = model_data["best_iteration"]
         return instance
+
+    @classmethod
+    def from_xgboost_params(cls, xgb_params: Dict[str, Any]) -> "LGBMModel":
+        """Create LGBMModel from XGBoost parameters.
+
+        Convenience method that maps XGBoost hyperparameters to LightGBM.
+
+        Args:
+            xgb_params: Dictionary of XGBoost parameters
+
+        Returns:
+            LGBMModel with mapped parameters
+
+        Example:
+            >>> xgb_params = {
+            ...     'n_estimators': 500,
+            ...     'max_depth': 6,
+            ...     'learning_rate': 0.05,
+            ...     'subsample': 0.8,
+            ...     'colsample_bytree': 0.8,
+            ...     'min_child_weight': 3,
+            ...     'gamma': 0.1,
+            ...     'reg_alpha': 0.1,
+            ...     'reg_lambda': 1.0,
+            ... }
+            >>> model = LGBMModel.from_xgboost_params(xgb_params)
+        """
+        config = LGBMConfig.from_xgboost_params(xgb_params)
+        return cls(config=config)
+
+
+def get_gpu_config() -> Dict[str, Any]:
+    """Get parameters for GPU training.
+
+    Returns:
+        Dictionary of GPU-specific parameters to add to config
+    """
+    return {
+        "device": "gpu",
+        "gpu_platform_id": 0,
+        "gpu_device_id": 0,
+        "gpu_use_dp": False,  # Use single precision for speed
+    }
+
+
+def migrate_xgboost_to_lightgbm(xgb_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert XGBoost parameters to LightGBM format.
+
+    This function provides a detailed mapping of all common XGBoost
+    parameters to their LightGBM equivalents.
+
+    Args:
+        xgb_params: Dictionary of XGBoost parameters
+
+    Returns:
+        Dictionary of LightGBM parameters
+
+    Parameter Mapping Reference:
+        XGBoost                    -> LightGBM
+        -------                       --------
+        n_estimators               -> n_estimators
+        max_depth                  -> max_depth
+        learning_rate (eta)        -> learning_rate
+        subsample                  -> bagging_fraction / subsample
+        colsample_bytree           -> feature_fraction / colsample_bytree
+        colsample_bylevel          -> (not directly supported)
+        colsample_bynode           -> feature_fraction_bynode
+        min_child_weight           -> min_child_samples (different concept)
+        gamma (min_split_loss)     -> min_split_gain
+        reg_alpha (alpha)          -> reg_alpha (lambda_l1)
+        reg_lambda (lambda)        -> reg_lambda (lambda_l2)
+        max_delta_step             -> (not directly supported)
+        scale_pos_weight           -> scale_pos_weight
+        tree_method='hist'         -> (default in LightGBM)
+        grow_policy='lossguide'    -> boosting_type='gbdt' (default)
+        n_jobs                     -> n_jobs / num_threads
+        random_state               -> random_state / seed
+        verbosity                  -> verbose
+
+    Notes:
+        - LightGBM uses leaf-wise growth by default (more efficient)
+        - min_child_weight in XGBoost relates to sum of instance weight (hessian)
+        - min_child_samples in LightGBM is a count of samples
+        - For similar behavior, multiply min_child_weight by ~10-20
+    """
+    lgb_params = {
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": "gbdt",
+        "verbose": -1,
+    }
+
+    # Direct mappings
+    direct_map = {
+        'n_estimators': 'n_estimators',
+        'learning_rate': 'learning_rate',
+        'reg_alpha': 'reg_alpha',
+        'reg_lambda': 'reg_lambda',
+        'random_state': 'random_state',
+        'n_jobs': 'n_jobs',
+        'scale_pos_weight': 'scale_pos_weight',
+    }
+
+    for xgb_name, lgb_name in direct_map.items():
+        if xgb_name in xgb_params:
+            lgb_params[lgb_name] = xgb_params[xgb_name]
+
+    # max_depth mapping
+    if 'max_depth' in xgb_params:
+        lgb_params['max_depth'] = xgb_params['max_depth']
+        # Set num_leaves based on max_depth (LightGBM recommendation)
+        lgb_params['num_leaves'] = min(2 ** xgb_params['max_depth'] - 1, 127)
+
+    # Sampling parameters
+    if 'subsample' in xgb_params:
+        lgb_params['bagging_fraction'] = xgb_params['subsample']
+        lgb_params['bagging_freq'] = 1  # Enable bagging
+
+    if 'colsample_bytree' in xgb_params:
+        lgb_params['feature_fraction'] = xgb_params['colsample_bytree']
+
+    if 'colsample_bynode' in xgb_params:
+        lgb_params['feature_fraction_bynode'] = xgb_params['colsample_bynode']
+
+    # gamma -> min_split_gain
+    if 'gamma' in xgb_params:
+        lgb_params['min_split_gain'] = xgb_params['gamma']
+
+    # min_child_weight -> min_child_samples (approximate conversion)
+    if 'min_child_weight' in xgb_params:
+        # XGBoost: sum of instance weight (hessian)
+        # LightGBM: count of samples
+        # Approximate conversion factor: 10-20
+        lgb_params['min_child_samples'] = int(xgb_params['min_child_weight'] * 15)
+
+    return lgb_params

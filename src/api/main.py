@@ -479,3 +479,20 @@ async def get_status():
             "last_action_time": _scaling_state["last_action_time"],
             "model_metrics": dict(_model_metrics),
         }
+
+
+def run_server():
+    """Run the FastAPI server with uvicorn."""
+    import uvicorn
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
+        timeout_graceful_shutdown=5,  # Fast shutdown
+    )
+
+
+if __name__ == "__main__":
+    run_server()

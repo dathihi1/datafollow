@@ -17,7 +17,8 @@
       "Bash(..venvScriptspip.exe install scikit-learn shap)",
       "Bash(jupyter nbconvert:*)",
       "Bash(if not exist \"c:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\reports\\\\figures\" mkdir \"c:\\\\Users\\\\Admin\\\\OneDrive\\\\Documents\\\\python\\\\datafollow\\\\reports\\\\figures\")",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
