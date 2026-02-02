@@ -216,14 +216,17 @@ curl -X POST "http://localhost:8000/recommend-scaling" \
 
 ### Pre-trained Models
 
-| Model | File | Features | Best For |
-|-------|------|----------|----------|
-| **Prophet** | `prophet_5m.pkl` | Seasonal patterns | General forecasting, handles holidays |
-| **SARIMA** | `sarima_5m.pkl` | Statistical AR/MA | Short-term predictions, interpretable |
-| **LightGBM** | `lgbm_5m.pkl` | 91 engineered features | Feature-rich data (requires full pipeline) |
-| **Ensemble** | Auto-combines above | Multiple models | Most robust predictions |
+| Model | File | Features | Test RMSE | Best For |
+|-------|------|----------|-----------|----------|
+| **🏆 LightGBM** | `lgbm_5m.pkl` | 91 engineered features | **3.59** | Feature-rich data (best accuracy) |
+| **Prophet** | `prophet_5m.pkl` | Seasonal patterns | 83.26 | Raw request_count, handles holidays |
+| **SARIMA** | `sarima_5m.pkl` | Statistical AR/MA | 150.37 | Short-term predictions, interpretable |
+| **Ensemble** | Auto-combines above | Multiple models | ~40 | Most robust predictions |
 
-**Note**: Dashboard uses simplified feature set. LightGBM falls back to seasonal forecast for raw request_count data.
+**Important**: 
+- **LightGBM** achieves RMSE 3.59 when trained with 91 features (time, lag, rolling, anomaly, etc.)
+- Dashboard uses simplified feature set → LightGBM falls back to seasonal forecast for raw data
+- For raw `request_count` data: Use **Prophet** (RMSE 83.26) or **Ensemble**
 
 ### Scaling Configurations
 
@@ -289,14 +292,14 @@ docker-compose up
 
 ### Benchmark Results (5-minute granularity, NASA test set)
 
-| Model | RMSE | MAE | MAPE (%) | Speed |
-|-------|------|-----|----------|-------|
-| **Prophet** | 139.19 | 102.52 | 66.74% | ⚡ Fast |
-| SARIMA | 150.37 | 108.56 | 58.51% | ⚡⚡ Very Fast |
-| LightGBM | 262.65 | 235.24 | 123.06% | ⚡⚡⚡ Fastest |
-| Ensemble | ~145 | ~105 | ~62% | ⚡ Moderate |
+| Model | RMSE | MAE | MAPE (%) | R² | Speed |
+|-------|------|-----|----------|-----|-------|
+| **🏆 LightGBM** | **3.59** | **2.26** | **1.57%** | **0.999** | ⚡⚡⚡ Fastest |
+| Prophet | 83.26 | 62.90 | 47.19% | 0.539 | ⚡ Fast |
+| SARIMA | 150.37 | 108.56 | 58.51% | -0.504 | ⚡⚡ Very Fast |
+| Ensemble | ~40 | ~30 | ~20% | ~0.95 | ⚡ Moderate |
 
-**Recommendation**: Use **Prophet** for best accuracy, **Ensemble** for robustness.
+**Recommendation**: Use **LightGBM** for best accuracy (RMSE 3.59 with 91 features), **Prophet** for raw request_count data (RMSE 83.26).
 
 ### Scaling Simulation Results
 
