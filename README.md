@@ -8,22 +8,27 @@ Advanced autoscaling analysis and prediction system for NASA Kennedy Space Cente
 
 ### Dual-Mode Dashboard
 - **📊 Historical Analysis Mode**: Analyze past traffic data with interactive visualizations
-  - Upload CSV/TXT files (up to 500MB)
+  - Upload CSV/TXT files (up to 500MB, auto-detects NASA log format)
   - Multiple scaling configurations (Conservative, Balanced, Aggressive)
-  - Three policy types (Balanced, Reactive, Predictive)
+  - Three policy types (Balanced, Reactive, Predictive) with distinct behaviors
   - Real-time cost simulation and SLA tracking
   - Export detailed reports
 
 - **🔮 Predictive Planning Mode**: AI-powered traffic forecasting
   - Multi-model forecasting (Prophet, SARIMA, LightGBM, Ensemble)
   - 7-30 day forecast horizons with confidence intervals
+  - **Iterative forecasting** with trend analysis and realistic variations
+  - **Real timestamp continuation** from historical data (not system time)
   - Automated configuration recommendations
-  - What-if scenario analysis
+  - **9-scenario comparison matrix** (3 configs × 3 policies)
+  - What-if scenario analysis with traffic multipliers and spike simulation
   - Cost optimization with risk assessment
 
 ### Smart Features
+- **NASA Log Auto-detection**: Automatically parses Apache Combined Log Format
+- **Intelligent Time Interval Calculation**: Extracts actual intervals from log timestamps
 - **Intelligent Downsampling**: LTTB algorithm for smooth visualization of large datasets (millions of points)
-- **Persistent Data**: Uploaded files cached across mode changes
+- **Persistent Data**: Uploaded files cached across mode changes with timestamp tracking
 - **Real-time Metrics**: Live cost calculations based on AWS EC2 pricing ($0.85/server/hour)
 - **Anomaly Detection**: Statistical and ML-based traffic spike identification
 
@@ -155,12 +160,16 @@ Access at: **http://localhost:8501** (or your custom port)
 4. **Export**: Download detailed reports
 
 #### Predictive Planning Mode
-1. **Load Historical Data**: Upload past traffic data
+1. **Load Historical Data**: Upload past traffic data (CSV/TXT/NASA logs)
 2. **Select Model**: Choose LightGBM/Prophet/SARIMA/Ensemble
 3. **Generate Forecast**: Set horizon (7-30 days) and confidence level
-4. **Run Simulation**: Test different scaling configurations
+   - Forecasts continue from last data timestamp (not current system time)
+   - Iterative forecasting with trend and realistic daily variations
+4. **Run Simulation**: Click "Run All Simulations" to test 9 scenarios (3 configs × 3 policies)
+   - View comparison matrix heatmap
+   - See Best Cost, Best SLA, Best Balance winners
 5. **Get Recommendations**: AI suggests optimal config based on cost/SLA priorities
-6. **What-If Analysis**: Test custom scenarios
+6. **What-If Analysis**: Test custom scenarios with traffic multipliers and spike injection
 
 ### Data Format
 
@@ -184,6 +193,8 @@ load,timestamp
 ```
 - One number per line, or comma-separated
 - Represents request counts per 5-minute period
+- **Auto-detects NASA Apache logs**: Pattern `- - [timestamp] "request"`
+- Automatically aggregates to 5-minute windows from parsed timestamps
 
 ## 🔧 API Endpoints (Optional)
 
@@ -238,9 +249,23 @@ curl -X POST "http://localhost:8000/recommend-scaling" \
 
 ### Scaling Policies
 
-- **Balanced**: Standard threshold-based scaling
-- **Reactive**: Faster response to load changes
-- **Predictive**: Uses forecast to scale proactively (requires ML model)
+- **Balanced**: Standard threshold-based scaling with 3-period consecutive check
+  - Scale out: 3 periods @ 80% utilization
+  - Moderate response time, balanced cost/SLA
+- **Reactive**: Immediate response to load changes (1-period consecutive)
+  - Scale out: 1 period @ 80% utilization (3x faster than Balanced)
+  - Shorter cooldown (3 min vs 5 min)
+  - More scaling events, higher cost, lower SLA violations
+- **Predictive**: Proactive scaling using trend analysis
+  - Pre-scales based on 5% upward trend detection
+  - Scale out at 75% (earlier than other policies)
+  - Safety margin: 15% over-provisioning
+  - Highest cost, lowest SLA violations (ideal for production)
+
+**Key Differences in Simulation Matrix:**
+- **Reactive** generates more scaling events → higher cost but better SLA
+- **Predictive** pre-scales before spikes → highest cost, best SLA protection  
+- **Balanced** offers middle ground → most cost-effective with acceptable SLA
 
 ### Cost Model
 

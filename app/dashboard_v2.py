@@ -59,30 +59,78 @@ def load_data(
     data_loader: DataLoader,
 ) -> LoadedData | None:
     """Load data based on sidebar configuration.
-    
+
     Maintains uploaded file across mode changes by caching in session state.
     """
-    
-    # If we have loaded data and source hasn't changed, return cached data
-    if st.session_state.loaded_data is not None:
-        # Return cached data for upload sources (persists across mode changes)
-        if config.data_source in ["upload_csv", "upload_txt", "saved"]:
-            return st.session_state.loaded_data
-    
+
     if config.data_source == "sample":
         return data_loader.generate_sample(config.n_periods, config.seed)
     
     elif config.data_source == "upload_csv":
         uploaded_file = st.sidebar.file_uploader(
-            "📁 Upload CSV",
+            "Upload CSV",
             type=["csv"],
-            help="CSV with 'load' or 'request_count' column",
+            help="CSV with numeric column for load/traffic data",
             key="csv_uploader",
         )
         if uploaded_file:
-            file_id = f"csv_{uploaded_file.name}_{uploaded_file.size}"
+            # Get available columns for selection
+            numeric_cols, all_cols = data_loader.get_csv_columns(uploaded_file)
+
+            if not numeric_cols:
+                st.sidebar.error("No numeric columns found in CSV")
+                return None
+
+            # Default to common column names if present
+            default_idx = 0
+            for i, col in enumerate(numeric_cols):
+                if col.lower() in ["load", "request_count", "target", "packets/time"]:
+                    default_idx = i
+                    break
+
+            selected_column = st.sidebar.selectbox(
+                "Select load column",
+                options=numeric_cols,
+                index=default_idx,
+                help="Choose which column contains the traffic/load data",
+            )
+
+            # Timestamp column selection (optional) for auto-calculating interval
+            timestamp_options = ["(None - use manual interval)"] + all_cols
+            default_ts_idx = 0
+            for i, col in enumerate(all_cols):
+                if col.lower() in ["timestamp", "time", "datetime", "date"]:
+                    default_ts_idx = i + 1  # +1 because of "(None)" option
+                    break
+
+            selected_timestamp = st.sidebar.selectbox(
+                "Timestamp column (optional)",
+                options=timestamp_options,
+                index=default_ts_idx,
+                help="Select timestamp column to auto-calculate time interval",
+            )
+
+            # If no timestamp selected, show manual interval selector
+            timestamp_col = None if selected_timestamp.startswith("(None") else selected_timestamp
+            time_interval = None
+
+            if timestamp_col is None:
+                time_interval = st.sidebar.selectbox(
+                    "Time interval per row",
+                    options=[1, 5, 15, 30, 60],
+                    index=1,
+                    format_func=lambda x: f"{x} minute{'s' if x > 1 else ''}",
+                    help="Time interval each data row represents",
+                )
+
+            file_id = f"csv_{uploaded_file.name}_{uploaded_file.size}_{selected_column}_{timestamp_col}_{time_interval}"
             if st.session_state.data_file_id != file_id:
-                result = data_loader.load_csv(uploaded_file)
+                result = data_loader.load_csv(
+                    uploaded_file,
+                    column_name=selected_column,
+                    timestamp_column=timestamp_col,
+                    time_interval_minutes=float(time_interval) if time_interval else None,
+                )
                 if result:
                     st.session_state.loaded_data = result
                     st.session_state.data_file_id = file_id
@@ -91,15 +139,35 @@ def load_data(
     
     elif config.data_source == "upload_txt":
         uploaded_file = st.sidebar.file_uploader(
-            "📁 Upload TXT",
+            "Upload TXT",
             type=["txt"],
-            help="TXT with one number per line or comma-separated",
+            help="NASA log format or numeric values (one per line/comma-separated)",
             key="txt_uploader",
         )
         if uploaded_file:
-            file_id = f"txt_{uploaded_file.name}_{uploaded_file.size}"
+            # Aggregation interval selector for NASA logs (5min is optimal for ML)
+            agg_interval = st.sidebar.selectbox(
+                "Aggregation interval",
+                options=[1, 5, 15],
+                index=1,  # default 5min (optimal for ML)
+                format_func=lambda x: f"{x} min" + (" (recommended)" if x == 5 else ""),
+                help="5-minute interval achieves best model accuracy (LightGBM RMSE 3.59)",
+                key="txt_agg_interval",
+            )
+            # Show model performance context based on benchmark results
+            if agg_interval == 5:
+                st.sidebar.caption("LightGBM RMSE: 3.59 (best)")
+            elif agg_interval == 1:
+                st.sidebar.caption("Prophet RMSE: 21.45 (noisier)")
+            else:  # 15
+                st.sidebar.caption("Prophet RMSE: 221.87 (coarser)")
+
+            file_id = f"txt_{uploaded_file.name}_{uploaded_file.size}_{agg_interval}"
             if st.session_state.data_file_id != file_id:
-                result = data_loader.load_txt(uploaded_file)
+                result = data_loader.load_txt(
+                    uploaded_file,
+                    aggregation_interval_minutes=agg_interval,
+                )
                 if result:
                     st.session_state.loaded_data = result
                     st.session_state.data_file_id = file_id
@@ -181,7 +249,7 @@ def main():
                - Export reports
             
             ### File Format:
-            - **CSV**: Must have column named `load` or `request_count`
+            - **CSV**: Any numeric column (select from dropdown after upload)
             - **TXT**: One number per line, or comma-separated values
             """)
         return
@@ -189,28 +257,44 @@ def main():
     # Data info header
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📊 Data Points", f"{loaded_data.length:,}")
+        st.metric("Data Points", f"{loaded_data.length:,}")
     with col2:
-        st.metric("⏱️ Time Span", f"{loaded_data.time_range_days:.1f} days")
+        time_span = loaded_data.time_range_days
+        if time_span is not None:
+            st.metric("Time Span", f"{time_span:.1f} days")
+        else:
+            st.metric("Max Load", f"{np.max(loaded_data.data):.1f}")
     with col3:
-        st.metric("📈 Mean Load", f"{np.mean(loaded_data.data):.1f}")
+        interval = loaded_data.time_interval_minutes
+        if interval is not None:
+            st.metric("Interval", f"{int(interval)} min")
+        else:
+            st.metric("Mean Load", f"{np.mean(loaded_data.data):.1f}")
     with col4:
-        st.metric("📊 Source", loaded_data.source_type.upper())
+        st.metric("Source", loaded_data.source_type.upper())
     
     st.divider()
     
     # Route to appropriate mode
     if config.mode == "historical":
+        # Update config with correct time interval from loaded data
+        sim_config = config.config
+        time_interval = loaded_data.time_interval_minutes
+        if time_interval is not None and time_interval != sim_config.time_window_minutes:
+            # Create new config with correct time window
+            from dataclasses import replace
+            sim_config = replace(sim_config, time_window_minutes=int(time_interval))
+
         # Run simulation if needed
-        cache_key = f"{loaded_data.source_type}_{config.config_preset}_{config.policy_type}"
-        
+        cache_key = f"{loaded_data.source_type}_{config.config_preset}_{config.policy_type}_{time_interval}"
+
         if st.session_state.simulation_result is None or \
            getattr(st.session_state, 'last_cache_key', None) != cache_key:
-            
+
             with st.spinner("Running simulation..."):
                 result = simulator.run_simulation(
                     loads=loaded_data.data,
-                    config=config.config,
+                    config=sim_config,
                     policy_type=config.policy_type,
                     config_name=config.config_preset,
                 )
@@ -221,7 +305,7 @@ def main():
             render_historical_mode(
                 loads=loaded_data.data,
                 result=st.session_state.simulation_result,
-                config=config.config,
+                config=sim_config,
                 config_preset=config.config_preset,
                 policy_type=config.policy_type,
                 enable_downsample=config.enable_downsample,

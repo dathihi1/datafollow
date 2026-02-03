@@ -280,34 +280,109 @@ class ScalingPolicy:
 
 
 class ReactivePolicy(ScalingPolicy):
-    """Reactive scaling policy that responds immediately to load changes."""
+    """Reactive scaling policy that responds immediately to load changes.
+    
+    Key difference: Scale out after just 1 period above threshold (vs 3 for balanced),
+    making it more responsive but potentially more costly due to frequent scaling.
+    """
 
     def __init__(self, config: ScalingConfig | None = None):
+        # Create a copy of config to avoid modifying the original
+        from copy import deepcopy
+        if config:
+            config = deepcopy(config)
         super().__init__(config)
-        # Override consecutive requirements for faster response
-        self.config.scale_out_consecutive = 1
-        self.config.scale_in_consecutive = 2
+        # Override consecutive requirements for immediate response
+        self.config.scale_out_consecutive = 1  # Scale out immediately
+        self.config.scale_in_consecutive = 2   # Scale in after 2 periods
+        self.config.cooldown_minutes = 3       # Shorter cooldown for agility
 
 
 class PredictivePolicy(ScalingPolicy):
-    """Predictive scaling policy that uses forecasts to scale proactively."""
+    """Predictive scaling policy that uses forecasts to scale proactively.
+    
+    Key difference: Pre-scales based on anticipated load using simple trend analysis,
+    aiming to prevent SLA violations before they occur.
+    """
 
     def __init__(
         self,
         config: ScalingConfig | None = None,
         forecast_horizon: int = 6,
-        safety_margin: float = 0.1,
+        safety_margin: float = 0.15,
     ):
         """Initialize predictive policy.
 
         Args:
             config: Scaling configuration
-            forecast_horizon: Number of periods to look ahead
-            safety_margin: Additional capacity margin (0-1)
+            forecast_horizon: Number of periods to look ahead (default 6 = 30min)
+            safety_margin: Additional capacity margin (default 15%)
         """
+        from copy import deepcopy
+        if config:
+            config = deepcopy(config)
         super().__init__(config)
         self.forecast_horizon = forecast_horizon
         self.safety_margin = safety_margin
+        # Predictive policy scales out earlier to prevent violations
+        self.config.scale_out_threshold = 0.75  # Scale out at 75% (vs 80% balanced)
+        self.config.scale_out_consecutive = 2   # Need 2 periods (vs 3 balanced)
+        self.recent_loads: list[float] = []  # Track recent loads for trend
+
+    def recommend(
+        self,
+        load: float,
+        timestamp: datetime | None = None,
+    ) -> ScalingDecision:
+        """Get scaling recommendation with simple predictive logic.
+        
+        When no explicit forecast is available, use recent load trend
+        to anticipate future needs and pre-scale.
+        """
+        # Track recent loads for trend analysis
+        self.recent_loads.append(load)
+        if len(self.recent_loads) > 12:  # Keep last hour (12 * 5min)
+            self.recent_loads.pop(0)
+        
+        # If we have enough history, check trend
+        if len(self.recent_loads) >= 6:
+            # Simple forecast: assume trend continues
+            recent_avg = np.mean(self.recent_loads[-6:])
+            older_avg = np.mean(self.recent_loads[-12:-6]) if len(self.recent_loads) >= 12 else recent_avg
+            
+            # Detect upward trend
+            trend_ratio = recent_avg / older_avg if older_avg > 0 else 1.0
+            
+            # Predict next load based on trend
+            predicted_load = load * trend_ratio * (1 + self.safety_margin)
+            
+            # Calculate required servers for predicted peak
+            timestamp = timestamp or datetime.now()
+            current = self.state.current_servers
+            predicted_required = self.config.get_required_servers(
+                predicted_load, 
+                target_utilization=0.70
+            )
+            
+            # Pre-scale if trend indicates we'll need more servers
+            if predicted_required > current and trend_ratio > 1.05:  # 5% upward trend
+                if self._is_cooldown_expired(timestamp):
+                    target = min(predicted_required, self.config.max_servers)
+                    utilization = self.config.get_utilization(load, current)
+                    decision = ScalingDecision(
+                        action=ScalingAction.SCALE_OUT,
+                        current_servers=current,
+                        target_servers=target,
+                        utilization=utilization,
+                        load=load,
+                        reason=f"predictive_pre_scale_trend_{trend_ratio:.2f}",
+                        timestamp=timestamp,
+                    )
+                    self._apply_decision(decision, timestamp)
+                    return decision
+        
+        # Otherwise use normal reactive logic
+        return super().recommend(load, timestamp)
 
     def recommend_with_forecast(
         self,

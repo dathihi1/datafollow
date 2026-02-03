@@ -47,6 +47,10 @@ class RollingFeatureExtractor:
 
         Returns:
             DataFrame with rolling features
+
+        Note:
+            All rolling features use shift(1) to avoid data leakage.
+            This ensures features at time t only use data from t-1 and earlier.
         """
         df = df.copy()
 
@@ -55,7 +59,8 @@ class RollingFeatureExtractor:
 
         for col in target_cols:
             for window in self.windows:
-                rolling = df[col].rolling(window=window, min_periods=self.min_periods)
+                # Use shift(1) to avoid data leakage - only use past observations
+                rolling = df[col].shift(1).rolling(window=window, min_periods=self.min_periods)
 
                 # Mean (most important)
                 df[f"{col}_rolling_mean_{window}"] = rolling.mean()
@@ -63,10 +68,13 @@ class RollingFeatureExtractor:
                 # Standard deviation (volatility)
                 df[f"{col}_rolling_std_{window}"] = rolling.std()
 
-                # Only compute min/max for smaller windows to save time
+                # Only compute min/max/range for smaller windows to save time
                 if window <= 12:
                     df[f"{col}_rolling_min_{window}"] = rolling.min()
                     df[f"{col}_rolling_max_{window}"] = rolling.max()
+                    df[f"{col}_rolling_range_{window}"] = (
+                        df[f"{col}_rolling_max_{window}"] - df[f"{col}_rolling_min_{window}"]
+                    )
 
         return df
 
@@ -93,7 +101,8 @@ class RollingFeatureExtractor:
 
         for col in target_cols:
             for window in self.windows:
-                rolling = df[col].rolling(window=window, min_periods=self.min_periods)
+                # Use shift(1) to avoid data leakage - only use past observations
+                rolling = df[col].shift(1).rolling(window=window, min_periods=self.min_periods)
 
                 # Median (50th percentile)
                 df[f"{col}_rolling_median_{window}"] = rolling.median()
@@ -135,7 +144,8 @@ class RollingFeatureExtractor:
 
         for col in target_cols:
             for span in spans:
-                ewm = df[col].ewm(span=span, min_periods=self.min_periods)
+                # Use shift(1) to avoid data leakage - EWM must not include current observation
+                ewm = df[col].shift(1).ewm(span=span, min_periods=self.min_periods)
 
                 df[f"{col}_ewm_mean_{span}"] = ewm.mean()
                 df[f"{col}_ewm_std_{span}"] = ewm.std()
@@ -159,9 +169,13 @@ class RollingFeatureExtractor:
                 features.extend([
                     f"{col}_rolling_mean_{window}",
                     f"{col}_rolling_std_{window}",
-                    f"{col}_rolling_min_{window}",
-                    f"{col}_rolling_max_{window}",
-                    f"{col}_rolling_range_{window}",
                 ])
+                # min/max/range only computed for smaller windows (see transform())
+                if window <= 12:
+                    features.extend([
+                        f"{col}_rolling_min_{window}",
+                        f"{col}_rolling_max_{window}",
+                        f"{col}_rolling_range_{window}",
+                    ])
 
         return features

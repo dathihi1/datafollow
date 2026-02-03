@@ -4,11 +4,19 @@
   "requests_per_server": 100,
   "scale_out_threshold": 0.8,
   "scale_in_threshold": 0.3,
-  "scale_out_consecutive": 3,
-  "scale_in_consecutive": 6,
+  "scale_out_consecutive": 1,
+  "scale_in_consecutive": 2,
   "cooldown_minutes": 5,
   "scale_out_increment": 2,
   "scale_in_decrement": 1,
   "cost_per_server_per_hour": 0.1,
-  "time_window_minutes": 5
+  "time_window_minutes": 5,
+  "_metadata": {
+    "selected_strategy": "Reactive",
+    "efficiency_score": 94.40833333333333,
+    "total_cost": 94.40833333333333,
+    "sla_violations": 0,
+    "sla_violation_penalty": 5.0,
+    "selection_criteria": "min(cost + sla_violations * penalty)"
+  }
 }

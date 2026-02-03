@@ -93,9 +93,10 @@ class AdvancedFeatureExtractor:
 
         col = "request_count"
 
-        # Rolling z-score
-        rolling_mean = df[col].rolling(window=self.window, min_periods=1).mean()
-        rolling_std = df[col].rolling(window=self.window, min_periods=1).std()
+        # Rolling z-score - use shift(1) to avoid data leakage
+        # At time t, we compare to rolling stats from t-1 and earlier
+        rolling_mean = df[col].shift(1).rolling(window=self.window, min_periods=1).mean()
+        rolling_std = df[col].shift(1).rolling(window=self.window, min_periods=1).std()
 
         # Avoid division by zero
         rolling_std = rolling_std.replace(0, float("nan"))
@@ -160,9 +161,10 @@ class AdvancedFeatureExtractor:
 
         col = "request_count"
 
-        # Rolling coefficient of variation
-        rolling_mean = df[col].rolling(window=self.window, min_periods=1).mean()
-        rolling_std = df[col].rolling(window=self.window, min_periods=1).std()
+        # Rolling coefficient of variation - use shift(1) to avoid data leakage
+        # At time t, volatility measures use only data from t-1 and earlier
+        rolling_mean = df[col].shift(1).rolling(window=self.window, min_periods=1).mean()
+        rolling_std = df[col].shift(1).rolling(window=self.window, min_periods=1).std()
 
         df[f"{col}_cv"] = rolling_std / rolling_mean.replace(0, float("nan"))
         df[f"{col}_cv"] = df[f"{col}_cv"].fillna(0)
@@ -172,10 +174,11 @@ class AdvancedFeatureExtractor:
         df[f"{col}_bb_lower"] = rolling_mean - 2 * rolling_std
         df[f"{col}_bb_width"] = df[f"{col}_bb_upper"] - df[f"{col}_bb_lower"]
 
-        # Percentage of capacity (if we assume max historical is capacity)
-        max_value = df[col].max()
-        if max_value > 0:
-            df[f"{col}_pct_of_max"] = df[col] / max_value
+        # Percentage of historical max - uses shift(1) to avoid data leakage
+        # At time t, we compare to max seen BEFORE t (not including t)
+        expanding_max = df[col].shift(1).expanding().max()
+        df[f"{col}_pct_of_max"] = df[col] / expanding_max.replace(0, float("nan"))
+        df[f"{col}_pct_of_max"] = df[f"{col}_pct_of_max"].fillna(0)
 
         return df
 

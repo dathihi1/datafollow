@@ -127,21 +127,27 @@ class SimulatorService:
         config_name: str = "custom",
     ) -> SimulationResult | None:
         """Run a single simulation."""
-        cache_key = f"{hash(loads.tobytes())}_{config_name}_{policy_type}"
-        
+        cache_key = f"{hash(loads.tobytes())}_{config_name}_{policy_type}_{config.time_window_minutes}"
+
         if cache_key in self._cache:
             return self._cache[cache_key]
         
         try:
             simulator = CostSimulator(config)
             
+            # Create policy with appropriate configuration
+            # Note: ReactivePolicy/PredictivePolicy will modify their config copies
             if policy_type == "reactive":
                 policy = ReactivePolicy(config)
             elif policy_type == "predictive":
                 policy = PredictivePolicy(config)
             else:
+                # Balanced policy - uses config as-is
                 policy = ScalingPolicy(config)
             
+            # For predictive policy, we can't use forecast in historical simulation
+            # So predictive will behave like balanced but with potential pre-scaling
+            # In real deployment, predictive would get actual forecasts
             metrics = simulator.simulate(loads, policy)
             
             result = SimulationResult(

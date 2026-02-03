@@ -40,7 +40,7 @@ class TestScalingConfig:
         assert config.cooldown_minutes == 5
         assert config.scale_out_increment == 2
         assert config.scale_in_decrement == 1
-        assert config.cost_per_server_per_hour == 0.10
+        assert config.cost_per_server_per_hour == 0.85
         assert config.time_window_minutes == 5
 
     def test_custom_values(self):
@@ -96,9 +96,24 @@ class TestScalingConfig:
             ScalingConfig(scale_in_decrement=0)
 
     def test_capacity_per_server(self):
-        """Test capacity_per_server property."""
-        config = ScalingConfig(requests_per_server=150)
+        """Test capacity_per_server property with default 5-min window."""
+        config = ScalingConfig(requests_per_server=150, time_window_minutes=5)
         assert config.capacity_per_server == 150
+
+    def test_capacity_per_server_scales_with_1min(self):
+        """1-minute window = 1/5 of 5-minute capacity."""
+        config = ScalingConfig(time_window_minutes=1, requests_per_server=100)
+        assert config.capacity_per_server == 20
+
+    def test_capacity_per_server_scales_with_15min(self):
+        """15-minute window = 3x of 5-minute capacity."""
+        config = ScalingConfig(time_window_minutes=15, requests_per_server=100)
+        assert config.capacity_per_server == 300
+
+    def test_capacity_per_server_scales_with_30min(self):
+        """30-minute window = 6x of 5-minute capacity."""
+        config = ScalingConfig(time_window_minutes=30, requests_per_server=100)
+        assert config.capacity_per_server == 600
 
     def test_get_total_capacity(self):
         """Test total capacity calculation."""
@@ -743,3 +758,59 @@ class TestSimulationMetrics:
         assert "Total Cost" in metrics_str
         assert "Avg Servers" in metrics_str
         assert "SLA Violations" in metrics_str
+
+
+class TestTimeIntervalScaling:
+    """Test capacity scales correctly with time interval."""
+
+    def test_utilization_equivalent_across_intervals(self):
+        """Same load rate should give same utilization across intervals."""
+        config_5min = ScalingConfig(time_window_minutes=5, requests_per_server=100)
+        config_15min = ScalingConfig(time_window_minutes=15, requests_per_server=100)
+
+        # 100 req/5min = 300 req/15min (same rate: 20 req/min)
+        util_5min = config_5min.get_utilization(100, num_servers=1)
+        util_15min = config_15min.get_utilization(300, num_servers=1)
+
+        assert abs(util_5min - util_15min) < 0.01
+
+    def test_required_servers_scales_correctly(self):
+        """Required servers should be same for equivalent load rates."""
+        config_1min = ScalingConfig(
+            time_window_minutes=1, requests_per_server=100, min_servers=1, max_servers=50
+        )
+        config_5min = ScalingConfig(
+            time_window_minutes=5, requests_per_server=100, min_servers=1, max_servers=50
+        )
+
+        # 20 req/1min = 100 req/5min (same rate)
+        servers_1min = config_1min.get_required_servers(20)
+        servers_5min = config_5min.get_required_servers(100)
+
+        assert servers_1min == servers_5min
+
+    def test_total_capacity_scales_with_interval(self):
+        """Total capacity should scale proportionally with time interval."""
+        config_5min = ScalingConfig(time_window_minutes=5, requests_per_server=100)
+        config_15min = ScalingConfig(time_window_minutes=15, requests_per_server=100)
+
+        # 15min capacity should be 3x of 5min capacity
+        capacity_5min = config_5min.get_total_capacity(num_servers=2)
+        capacity_15min = config_15min.get_total_capacity(num_servers=2)
+
+        assert capacity_15min == capacity_5min * 3
+
+    def test_cost_per_period_independent_of_capacity_scaling(self):
+        """Cost per period should only depend on time, not capacity scaling."""
+        config_5min = ScalingConfig(
+            time_window_minutes=5, cost_per_server_per_hour=0.10, requests_per_server=100
+        )
+        config_15min = ScalingConfig(
+            time_window_minutes=15, cost_per_server_per_hour=0.10, requests_per_server=100
+        )
+
+        # Cost for 15min should be 3x cost for 5min (same hourly rate)
+        cost_5min = config_5min.get_cost_per_period(num_servers=2)
+        cost_15min = config_15min.get_cost_per_period(num_servers=2)
+
+        assert abs(cost_15min - cost_5min * 3) < 0.0001

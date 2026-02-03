@@ -72,61 +72,67 @@ def _render_overview(
 ):
     """Render performance overview."""
     st.header("Performance Overview")
-    
+
+    # Calculate cost per server
+    avg_servers = metrics['avg_servers']
+    total_cost = metrics['total_cost']
+    cost_per_server = total_cost / avg_servers if avg_servers > 0 else 0
+    cost_per_server_per_hour = config.cost_per_server_per_hour
+
     # Key metrics row 1
     col1, col2, col3, col4 = st.columns(4)
-    
+
     with col1:
         st.metric(
-            "💰 Total Cost",
-            f"${metrics['total_cost']:.2f}",
+            "Total Cost",
+            f"${total_cost:.2f}",
             help="Total cost over simulation period",
         )
     with col2:
         st.metric(
-            "🖥️ Avg Servers",
-            f"{metrics['avg_servers']:.1f}",
-            help="Average servers used",
+            "Cost/Server",
+            f"${cost_per_server:.2f}",
+            help="Total cost divided by average servers",
         )
     with col3:
         st.metric(
-            "📊 Avg Utilization",
+            "Cost/Server/Hour",
+            f"${cost_per_server_per_hour:.2f}",
+            help="Configured hourly cost per server",
+        )
+    with col4:
+        st.metric(
+            "Avg Servers",
+            f"{avg_servers:.1f}",
+            help="Average servers used",
+        )
+
+    # Key metrics row 2
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Avg Utilization",
             f"{metrics['avg_utilization']:.1%}",
             help="Average server utilization",
         )
-    with col4:
+    with col2:
         st.metric(
-            "⚠️ SLA Violations",
+            "SLA Violations",
             f"{metrics['sla_violations']} ({metrics['sla_violation_rate']:.1%})",
             help="Periods with overload",
         )
-    
-    # Key metrics row 2
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
+    with col3:
         st.metric(
-            "🔄 Scaling Events",
-            f"{metrics['scaling_events']}",
-            help=f"Out: {metrics['scale_out_events']}, In: {metrics['scale_in_events']}",
-        )
-    with col2:
-        st.metric(
-            "📉 Server Range",
+            "Server Range",
             f"{metrics['min_servers']} - {metrics['max_servers']}",
             help="Min and max servers during simulation",
         )
-    with col3:
-        st.metric(
-            "💵 Cost/Hour",
-            f"${metrics['avg_cost_per_hour']:.4f}",
-            help="Average cost per hour",
-        )
     with col4:
         st.metric(
-            "🗑️ Wasted Capacity",
-            f"{metrics['wasted_capacity_periods']}",
-            help="Periods with < 30% utilization",
+            "Scaling Events",
+            f"{metrics['scaling_events']}",
+            help=f"Out: {metrics['scale_out_events']}, In: {metrics['scale_in_events']}",
         )
     
     # Configuration info

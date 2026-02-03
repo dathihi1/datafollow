@@ -156,25 +156,37 @@ def create_forecast_chart(
     forecast: ForecastResult,
     title: str = "Traffic Forecast",
 ) -> go.Figure:
-    """Create forecast visualization with confidence intervals."""
+    """Create forecast visualization with confidence intervals and real dates."""
+    from datetime import datetime, timedelta
+    
     fig = go.Figure()
     
+    # Use forecast timestamps if available, otherwise generate
+    if forecast.timestamps and len(forecast.timestamps) > 0:
+        # Use actual timestamps from forecast
+        forecast_dates = forecast.timestamps
+        
+        # Generate historical timestamps (5-min intervals backwards)
+        last_hist_time = forecast_dates[0] - timedelta(minutes=5)
+        hist_dates = [last_hist_time - timedelta(minutes=5*i) for i in range(len(historical)-1, -1, -1)]
+    else:
+        # Fallback: generate timestamps
+        now = datetime.now()
+        hist_dates = [now - timedelta(minutes=5*(len(historical)-i)) for i in range(len(historical))]
+        forecast_dates = [now + timedelta(minutes=5*i) for i in range(len(forecast.predictions))]
+    
     # Historical data
-    n_hist = len(historical)
     fig.add_trace(go.Scatter(
-        x=list(range(n_hist)),
+        x=hist_dates,
         y=historical,
         mode='lines',
         name='Historical',
         line=dict(color='#636363', width=1),
     ))
     
-    # Forecast
-    forecast_x = list(range(n_hist, n_hist + len(forecast.predictions)))
-    
     # Confidence interval (filled area)
     fig.add_trace(go.Scatter(
-        x=forecast_x + forecast_x[::-1],
+        x=forecast_dates + forecast_dates[::-1],
         y=list(forecast.upper_bound) + list(forecast.lower_bound[::-1]),
         fill='toself',
         fillcolor='rgba(31, 119, 180, 0.2)',
@@ -185,7 +197,7 @@ def create_forecast_chart(
     
     # Forecast line
     fig.add_trace(go.Scatter(
-        x=forecast_x,
+        x=forecast_dates,
         y=forecast.predictions,
         mode='lines',
         name='Forecast',
@@ -193,14 +205,20 @@ def create_forecast_chart(
     ))
     
     # Vertical line at forecast start
-    fig.add_vline(x=n_hist, line_dash="dash", line_color="gray", opacity=0.5)
+    if forecast_dates:
+        fig.add_vline(x=forecast_dates[0], line_dash="dash", line_color="gray", opacity=0.5)
     
     fig.update_layout(
         title=title,
-        xaxis_title="Time Period",
+        xaxis_title="Date/Time",
         yaxis_title="Request Load",
         height=450,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        xaxis=dict(
+            tickformat="%b %d\n%H:%M",  # Show date and time
+            tickmode="auto",
+            nticks=15,
+        ),
     )
     
     return fig
@@ -209,20 +227,34 @@ def create_forecast_chart(
 def create_comparison_matrix_chart(
     matrix_data: list[dict],
 ) -> go.Figure:
-    """Create heatmap for config/policy comparison matrix."""
+    """Create heatmap for config/policy comparison matrix.
+    
+    Matches notebook 10_policy_optimization.ipynb heatmap style.
+    """
     import pandas as pd
     
     df = pd.DataFrame(matrix_data)
     
-    # Pivot for heatmap
-    pivot = df.pivot(index="Config", columns="Policy", values="Cost")
+    # Remove duplicates if any (keep first occurrence)
+    df = df.drop_duplicates(subset=["Config", "Policy"], keep="first")
+    
+    # Pivot for heatmap - pivot_table with aggfunc handles duplicates automatically
+    pivot = df.pivot_table(
+        index="Config",
+        columns="Policy",
+        values="Cost",
+        aggfunc="first",  # Take first value if duplicates exist
+    )
+    
+    # Handle NaN values (fill with 0 or could use dropna)
+    pivot = pivot.fillna(0)
     
     fig = go.Figure(data=go.Heatmap(
         z=pivot.values,
-        x=pivot.columns,
-        y=pivot.index,
+        x=pivot.columns.tolist(),
+        y=pivot.index.tolist(),
         colorscale="RdYlGn_r",
-        text=[[f"${v:.2f}" for v in row] for row in pivot.values],
+        text=[[f"${v:.2f}" if v > 0 else "N/A" for v in row] for row in pivot.values],
         texttemplate="%{text}",
         textfont={"size": 12},
         hovertemplate="Config: %{y}<br>Policy: %{x}<br>Cost: %{text}<extra></extra>",

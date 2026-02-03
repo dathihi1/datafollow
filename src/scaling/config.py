@@ -76,8 +76,14 @@ class ScalingConfig:
 
     @property
     def capacity_per_server(self) -> int:
-        """Get capacity per server for the configured time window."""
-        return self.requests_per_server
+        """Get capacity per server for the configured time window.
+
+        Base capacity is requests_per_server (100) per 5 minutes.
+        Scale proportionally for other time windows.
+        Example: 1min = 20, 5min = 100, 15min = 300, 30min = 600
+        """
+        scale_factor = self.time_window_minutes / 5
+        return int(self.requests_per_server * scale_factor)
 
     def get_total_capacity(self, num_servers: int) -> int:
         """Calculate total capacity for given number of servers.
