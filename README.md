@@ -4,6 +4,26 @@
 
 Advanced autoscaling analysis and prediction system for NASA Kennedy Space Center web server traffic. Features a hybrid Streamlit dashboard with historical analysis and ML-powered predictive planning.
 
+---
+
+## 📋 Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+1. **Python 3.10+** (Recommended: Python 3.10 or 3.11)
+   - Check version: `python --version`
+   
+2. **Docker & Docker Compose** (Optional, for containerized deployment)
+   - Docker Desktop for Windows/Mac
+   - Docker Engine + Docker Compose for Linux
+   
+3. **System Requirements**
+   - **RAM**: Minimum 8GB recommended for ML models
+   - **Disk Space**: At least 2GB for dependencies and models
+   - **OS**: Windows 10+, macOS 10.14+, or Linux
+
+---
+
 ## 🌟 Features
 
 ### Dual-Mode Dashboard
@@ -62,26 +82,75 @@ Advanced autoscaling analysis and prediction system for NASA Kennedy Space Cente
 | Advanced | 12 | spike_score, trend, velocity, momentum |
 | Aggregation | 10 | request_count, bytes_total, error_rate |
 
+## 📥 Pre-trained Models (Required)
+
+**Models are hosted on Google Drive** (>100MB, not included in repository).
+
+### Download Link
+**Google Drive**: [YOUR_DRIVE_LINK_HERE](https://drive.google.com/drive/folders/YOUR_FOLDER_ID)
+
+### Manual Download
+1. Download all `.pkl` files from the Drive link above
+2. Place them in the `models/` directory:
+   ```
+   models/
+   ├── lgbm_5m.pkl
+   ├── lgbm_forecaster.pkl
+   ├── lgbm_hybrid_residual.pkl
+   ├── prophet_5m.pkl
+   ├── sarima_5m.pkl
+   ├── feature_scaler.pkl
+   └── feature_scaler_nonlag.pkl
+   ```
+
+### Auto Download Script (Optional)
+```bash
+# Download models from Google Drive
+python scripts/download_models.py
+```
+
+---
+
 ## 📦 Installation
 
-### Requirements
-- Python 3.10+
-- Virtual environment (venv/conda)
-
-### Quick Start
-
+### Step 1: Clone Repository
 ```bash
-# Clone repository
 git clone https://github.com/your-repo/datafollow.git
 cd datafollow
+```
 
-# Create and activate virtual environment
+### Step 2: Create Virtual Environment
+```bash
+# Create virtual environment
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
 
-# Install dependencies
+# Activate virtual environment
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+# Windows (CMD)
+.venv\Scripts\activate.bat
+# Linux/Mac
+source .venv/bin/activate
+```
+
+### Step 3: Install Dependencies
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+### Step 4: Download Pre-trained Models
+
+Models are already listed in the section above. Make sure all `.pkl` files are in the `models/` directory.
+
+### Step 5: Build Docker (Optional)
+```bash
+# Build all services
+docker-compose build
+
+# Or build specific services
+docker-compose build dashboard
+docker-compose build api
 ```
 
 ### Configuration
@@ -89,7 +158,7 @@ pip install -r requirements.txt
 The dashboard uses `.streamlit/config.toml` for server settings:
 - **Max Upload Size**: 500MB
 - **Auto-reload**: Enabled for development
-- **Port**: 8502 (configurable)
+- **Port**: 8501 (default) or 8502 (configurable)
 
 ## 📁 Project Structure
 
@@ -134,13 +203,44 @@ datafollow/
 
 **🆕 = New/Updated in latest version**
 
-## 🚀 Usage
+---
 
-### Start the Dashboard
+## 🚀 How to Run (QUAN TRỌNG NHẤT)
 
+### Bước 1: Xử lý File Dữ liệu
 ```bash
-# Activate virtual environment
-.venv\Scripts\activate
+# Activate virtual environment first
+.venv\Scripts\Activate.ps1  # Windows PowerShell
+# source .venv/bin/activate  # Linux/Mac
+
+# The dashboard will handle file processing automatically when you upload
+# No need to run separate preprocessing scripts
+```
+
+**Lưu ý**: Dashboard sẽ tự động xử lý file khi bạn upload. Không cần chạy script riêng.
+
+### Bước 2: Training hoặc Load Model
+```bash
+# Option 1: Use pre-trained models (Recommended - Khuyến nghị)
+# Just make sure models/*.pkl files are in place (from Installation Step 4)
+# Dashboard will automatically load models when running
+
+# Option 2: Train new models (Advanced - Nâng cao)
+# Run notebooks in order:
+jupyter notebook notebooks/06_baseline_models.ipynb
+jupyter notebook notebooks/07_ml_models.ipynb
+```
+
+**Lưu ý**: Mô hình đã được train sẵn trong thư mục `models/`. Dashboard sẽ tự động load khi chạy.
+
+### Bước 3: Chạy Dashboard/API
+
+#### Chạy Dashboard (Recommended)
+```bash
+# Make sure virtual environment is activated
+.venv\Scripts\Activate.ps1  # Windows PowerShell
+.venv\Scripts\activate.bat  # Windows CMD
+# source .venv/bin/activate  # Linux/Mac
 
 # Run the hybrid dashboard
 streamlit run app/dashboard_v2.py
@@ -149,17 +249,42 @@ streamlit run app/dashboard_v2.py
 streamlit run app/dashboard_v2.py --server.port 8502
 ```
 
-Access at: **http://localhost:8501** (or your custom port)
+**Truy cập**: http://localhost:8501 (hoặc port tùy chỉnh)
 
-### Dashboard Workflow
+**Ví dụ**: Chạy `streamlit run app/dashboard_v2.py`, sau đó truy cập localhost:8501
 
-#### Historical Analysis Mode
+#### Chạy API (Optional)
+```bash
+# Start FastAPI server
+uvicorn src.api.main:app --reload --port 8000
+```
+
+**Truy cập API**: http://localhost:8000/docs
+
+#### Chạy bằng Docker (Alternative)
+```bash
+# Start all services
+docker-compose up
+
+# Access:
+# - Dashboard: http://localhost:8501
+# - API: http://localhost:8000
+# - Stop: docker-compose down
+```
+
+---
+
+## 📖 Usage Guide
+
+### Dashboard Workflow Guide
+
+#### Historical Analysis Mode (Chế độ Phân tích Lịch sử)
 1. **Load Data**: Upload CSV/TXT or use sample data
 2. **Configure**: Select preset (Conservative/Balanced/Aggressive) and policy
 3. **Analyze**: View traffic patterns, scaling behavior, cost metrics
 4. **Export**: Download detailed reports
 
-#### Predictive Planning Mode
+#### Predictive Planning Mode (Chế độ Dự đoán)
 1. **Load Historical Data**: Upload past traffic data (CSV/TXT/NASA logs)
 2. **Select Model**: Choose LightGBM/Prophet/SARIMA/Ensemble
 3. **Generate Forecast**: Set horizon (7-30 days) and confidence level
