@@ -29,8 +29,10 @@ notebooks/
 # Data
 DATA/
 *.csv
-*.txt
 *.parquet
+# Allow requirements.txt
+*.txt
+!requirements.txt
 
 # Tests
 tests/
