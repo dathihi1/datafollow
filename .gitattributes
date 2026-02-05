@@ -1,0 +1,7 @@
+# Ensure binary files are treated as binary
+*.pkl binary
+*.joblib binary
+*.h5 binary
+*.pth binary
+*.pt binary
+*.parquet binary
