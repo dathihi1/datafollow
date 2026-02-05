@@ -1,0 +1,7 @@
+{
+  "avg_bytes_per_request": 19409.528784024405,
+  "train_total_bytes": 56857652515.0,
+  "train_total_requests": 2929368.0,
+  "ml_model_rmse": 28701.43407679628,
+  "ratio_estimation_rmse": 1487950.5694703269
+}
